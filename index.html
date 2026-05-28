@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Target Ratings Scraper</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f4f4f4;
+      color: #222;
+      margin: 0;
+      padding: 32px 16px;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #cc0000;
+      font-size: 1.6rem;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      color: #666;
+      font-size: 0.9rem;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.09);
+      margin-bottom: 24px;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .hint {
+      font-size: 0.82rem;
+      color: #777;
+      margin-bottom: 10px;
+    }
+
+    textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: 'Courier New', monospace;
+      resize: vertical;
+      min-height: 120px;
+      transition: border-color 0.2s;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: #cc0000;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 9px 22px;
+      border: none;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+
+    #fetchBtn {
+      background: #cc0000;
+      color: white;
+    }
+    #fetchBtn:hover:not(:disabled) { background: #a80000; }
+    #fetchBtn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    #csvBtn {
+      background: #eee;
+      color: #333;
+      display: none;
+    }
+    #csvBtn:hover { background: #ddd; }
+
+    #clearBtn {
+      background: transparent;
+      color: #888;
+      border: 1px solid #ccc;
+    }
+    #clearBtn:hover { background: #f5f5f5; }
+
+    .progress {
+      font-size: 0.88rem;
+      color: #555;
+      margin-top: 10px;
+      min-height: 18px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead tr {
+      background: #cc0000;
+      color: white;
+    }
+
+    th {
+      padding: 11px 14px;
+      text-align: left;
+      font-size: 0.88rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 11px 14px;
+      border-bottom: 1px solid #eee;
+      font-size: 0.9rem;
+    }
+
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: #fdf5f5; }
+
+    .tcin-cell {
+      font-family: 'Courier New', monospace;
+      font-size: 0.85rem;
+      color: #444;
+    }
+
+    .link-cell a {
+      color: #cc0000;
+      text-decoration: none;
+      font-size: 0.85rem;
+    }
+    .link-cell a:hover { text-decoration: underline; }
+
+    .rating-val {
+      font-weight: 700;
+      font-size: 1rem;
+    }
+
+    .pending { color: #aaa; font-style: italic; }
+    .ok { color: #1a7a1a; }
+    .miss { color: #999; }
+    .err { color: #cc0000; }
+
+    .spinner {
+      display: inline-block;
+      width: 13px;
+      height: 13px;
+      border: 2px solid #ccc;
+      border-top-color: #cc0000;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 5px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #noResults {
+      text-align: center;
+      color: #999;
+      padding: 30px;
+      display: none;
+    }
+
+    .proxy-note {
+      font-size: 0.8rem;
+      color: #888;
+      margin-top: 10px;
+      padding: 8px 12px;
+      background: #fffbea;
+      border-left: 3px solid #f0c000;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Target Ratings Scraper</h1>
+  <p class="subtitle">Paste Target product TCINs below to fetch star ratings and review counts.</p>
+
+  <div class="card">
+    <label for="productIds">Product IDs (TCINs)</label>
+    <p class="hint">One per line, or comma/space-separated. Example: <code>84952002</code></p>
+    <textarea id="productIds" placeholder="84952002&#10;12345678&#10;87654321"></textarea>
+
+    <div class="actions">
+      <button id="fetchBtn" onclick="scrapeAll()">Fetch Ratings</button>
+      <button id="csvBtn" onclick="downloadCSV()">Download CSV</button>
+      <button id="clearBtn" onclick="clearAll()">Clear</button>
+    </div>
+
+    <div class="progress" id="progress"></div>
+
+    <div class="proxy-note">
+      <strong>Note:</strong> Requests are routed through a public CORS proxy (codetabs.com) since browsers
+      cannot fetch cross-origin pages directly. If a product shows "Not found", the data may be
+      loaded dynamically — try opening the product link to verify the TCIN is valid.
+    </div>
+  </div>
+
+  <div id="resultsCard" class="card" style="display:none; padding:0; overflow:hidden;">
+    <table>
+      <thead>
+        <tr>
+          <th>TCIN</th>
+          <th>Product Page</th>
+          <th>Rating</th>
+          <th># of Ratings</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <div id="noResults">No valid TCINs entered.</div>
+</div>
+
+<script>
+  // corsproxy.io works from file:// (null origin) unlike allorigins
+  const CORS_PROXY = 'https://api.codetabs.com/v1/proxy?quest=';
+  const CONCURRENCY = 3;
+
+  let resultsData = [];
+
+  // ── Parse the raw textarea into an array of TCIN strings ──────────────────
+  function parseIds(raw) {
+    return [...new Set(
+      raw.split(/[\n,\s]+/)
+         .map(s => s.trim())
+         .filter(s => /^\d{5,12}$/.test(s))   // TCINs are typically 8 digits
+    )];
+  }
+
+  // ── Fetch the Target product page via CORS proxy ───────────────────────────
+  async function fetchPage(tcin) {
+    const targetUrl = `https://www.target.com/p/-/A-${tcin}`;
+    const proxyUrl  = `${CORS_PROXY}${encodeURIComponent(targetUrl)}`;
+
+    const resp = await fetch(proxyUrl);
+    if (!resp.ok) throw new Error(`Proxy error ${resp.status}`);
+
+    // corsproxy.io returns the raw HTML directly
+    return await resp.text();
+  }
+
+  // ── Extract rating & count from raw HTML ──────────────────────────────────
+  function parseRatings(html) {
+    const parser = new DOMParser();
+    const doc    = parser.parseFromString(html, 'text/html');
+
+    // 1) Try the data-test attributes the user identified
+    const ratingEl = doc.querySelector('[data-test="totalGuestRating"]');
+    const countEl  = doc.querySelector('[data-test="ratingCountText"]');
+
+    let rating = ratingEl ? ratingEl.textContent.trim() : null;
+    let count  = countEl  ? countEl.textContent.trim()  : null;
+
+    // Strip any parentheses or extra text from count  e.g. "(1,234 ratings)"
+    if (count) count = count.replace(/[()]/g, '').trim();
+
+    // 2) If not found in rendered HTML, search embedded JSON script blocks
+    if (!rating || !count) {
+      const scripts = doc.querySelectorAll('script');
+      for (const script of scripts) {
+        const text = script.textContent;
+        if (!text || !text.includes('rating')) continue;
+
+        if (!rating) {
+          const m = text.match(/"(?:averageOverallRating|averageRating|rating)"\s*:\s*"?(\d+(?:\.\d+)?)"?/);
+          if (m) rating = m[1];
+        }
+
+        if (!count) {
+          const m = text.match(/"(?:totalGuestReviewCount|totalReviewCount|reviewCount|ratingCount)"\s*:\s*"?(\d[\d,]*)"?/);
+          if (m) count = m[1];
+        }
+
+        if (rating && count) break;
+      }
+    }
+
+    // 3) Last resort: regex against the raw HTML string for the JSON data
+    // Target embeds SSR data as: "rating":{"average":4.72,"count":17053}
+    if (!rating) {
+      const m = html.match(/"rating"\s*:\s*\{\s*"average"\s*:\s*(\d+(?:\.\d+)?)/) ||
+                html.match(/"(?:averageOverallRating|averageRating)"\s*:\s*"?(\d+(?:\.\d+)?)/); 
+      if (m) rating = m[1];
+    }
+    if (!count) {
+      const m = html.match(/"average"\s*:\s*\d+(?:\.\d+)?\s*,\s*"count"\s*:\s*(\d+)/) ||
+                html.match(/"(?:totalGuestReviewCount|totalReviewCount|reviewCount)"\s*:\s*(\d+)/);
+      if (m) count = m[1];
+    }
+
+    return { rating, count };
+  }
+
+  // ── Table row helpers ──────────────────────────────────────────────────────
+  function addTableRow(tcin) {
+    const tbody = document.getElementById('tableBody');
+    const tr = document.createElement('tr');
+    tr.id = `row-${tcin}`;
+    tr.innerHTML = `
+      <td class="tcin-cell">${tcin}</td>
+      <td class="link-cell">
+        <a href="https://www.target.com/p/-/A-${tcin}" target="_blank" rel="noopener">View ↗</a>
+      </td>
+      <td id="rating-${tcin}" class="pending"><span class="spinner"></span></td>
+      <td id="count-${tcin}"  class="pending"><span class="spinner"></span></td>
+      <td id="status-${tcin}" class="pending"><span class="spinner"></span> Fetching…</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  function updateTableRow(tcin, { rating, count, error }) {
+    const ratingCell = document.getElementById(`rating-${tcin}`);
+    const countCell  = document.getElementById(`count-${tcin}`);
+    const statusCell = document.getElementById(`status-${tcin}`);
+
+    if (error) {
+      ratingCell.innerHTML = '<span class="miss">—</span>';
+      countCell.innerHTML  = '<span class="miss">—</span>';
+      statusCell.innerHTML = `<span class="err">✗ ${error}</span>`;
+    } else {
+      ratingCell.innerHTML = rating
+        ? `<span class="rating-val ok">${rating}</span>`
+        : '<span class="miss">Not found</span>';
+      countCell.innerHTML = count
+        ? `<span class="ok">${count}</span>`
+        : '<span class="miss">Not found</span>';
+      statusCell.innerHTML = `<span class="ok">✓ Done</span>`;
+    }
+  }
+
+  // ── Main scrape orchestrator ───────────────────────────────────────────────
+  async function scrapeAll() {
+    const ids = parseIds(document.getElementById('productIds').value);
+
+    if (!ids.length) {
+      document.getElementById('noResults').style.display = 'block';
+      document.getElementById('resultsCard').style.display = 'none';
+      return;
+    }
+
+    document.getElementById('noResults').style.display = 'none';
+
+    // Reset results
+    resultsData = ids.map(tcin => ({ tcin, rating: null, count: null, error: null }));
+    document.getElementById('tableBody').innerHTML = '';
+    document.getElementById('resultsCard').style.display = 'block';
+    document.getElementById('csvBtn').style.display = 'none';
+
+    const fetchBtn = document.getElementById('fetchBtn');
+    fetchBtn.disabled = true;
+    fetchBtn.textContent = 'Fetching…';
+
+    ids.forEach(addTableRow);
+
+    let done = 0;
+    const total = ids.length;
+    const setProgress = () => {
+      document.getElementById('progress').textContent =
+        `Processing… ${done} / ${total} complete`;
+    };
+    setProgress();
+
+    async function processOne(tcin) {
+      try {
+        const html = await fetchPage(tcin);
+        const { rating, count } = parseRatings(html);
+
+        const row = resultsData.find(r => r.tcin === tcin);
+        row.rating = rating;
+        row.count  = count;
+        updateTableRow(tcin, { rating, count });
+      } catch (err) {
+        const row = resultsData.find(r => r.tcin === tcin);
+        row.error = err.message;
+        updateTableRow(tcin, { error: err.message });
+      } finally {
+        done++;
+        setProgress();
+      }
+    }
+
+    // Process in batches to avoid hammering the proxy
+    for (let i = 0; i < ids.length; i += CONCURRENCY) {
+      const chunk = ids.slice(i, i + CONCURRENCY);
+      await Promise.all(chunk.map(processOne));
+    }
+
+    document.getElementById('progress').textContent = `Done — ${total} product${total !== 1 ? 's' : ''} processed.`;
+    fetchBtn.disabled = false;
+    fetchBtn.textContent = 'Fetch Ratings';
+    document.getElementById('csvBtn').style.display = 'inline-block';
+  }
+
+  // ── CSV export ─────────────────────────────────────────────────────────────
+  function downloadCSV() {
+    const rows = [['TCIN', 'URL', 'Rating', 'Number of Ratings', 'Error']];
+    for (const r of resultsData) {
+      rows.push([
+        r.tcin,
+        `https://www.target.com/p/-/A-${r.tcin}`,
+        r.rating ?? '',
+        r.count  ?? '',
+        r.error  ?? ''
+      ]);
+    }
+    const csv = rows.map(row =>
+      row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+    ).join('\r\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `target-ratings-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ── Clear ──────────────────────────────────────────────────────────────────
+  function clearAll() {
+    document.getElementById('productIds').value = '';
+    document.getElementById('tableBody').innerHTML = '';
+    document.getElementById('resultsCard').style.display = 'none';
+    document.getElementById('noResults').style.display = 'none';
+    document.getElementById('csvBtn').style.display = 'none';
+    document.getElementById('progress').textContent = '';
+    resultsData = [];
+  }
+</script>
+</body>
+</html>
