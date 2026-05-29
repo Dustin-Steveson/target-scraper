@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Target Ratings Scraper</title>
+  <title>Product Ratings Scraper</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
 
@@ -194,16 +194,75 @@
       border-left: 3px solid #f0c000;
       border-radius: 3px;
     }
+
+    /* ── Mode switcher ────────────────────────────────────────────────── */
+    .mode-switcher {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .mode-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      border: 2px solid #ddd;
+      border-radius: 10px;
+      background: white;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 600;
+      color: #555;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    .mode-btn:hover { border-color: #bbb; }
+
+    #btn-target.active  { border-color: #cc0000; color: #cc0000; }
+    #btn-amazon.active  { border-color: #e47911; color: #e47911; }
+
+    /* ── Amazon mode color overrides ──────────────────────────────────── */
+    .amazon-mode h1                             { color: #e47911; }
+    .amazon-mode #fetchBtn                      { background: #e47911; }
+    .amazon-mode #fetchBtn:hover:not(:disabled) { background: #c06800; }
+    .amazon-mode thead tr                       { background: #e47911; }
+    .amazon-mode .link-cell a                   { color: #e47911; }
+    .amazon-mode .err                           { color: #e47911; }
+    .amazon-mode textarea:focus                 { border-color: #e47911; }
+    .amazon-mode .spinner                       { border-top-color: #e47911; }
+    .amazon-mode tbody tr:hover td              { background: #fffaf5; }
   </style>
 </head>
 <body>
 <div class="container">
-  <h1>Target Ratings Scraper</h1>
-  <p class="subtitle">Paste Target product TCINs below to fetch star ratings and review counts.</p>
+
+  <div class="mode-switcher">
+    <button class="mode-btn active" id="btn-target" onclick="setMode('target')">
+      <svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <circle cx="14" cy="14" r="14" fill="#cc0000"/>
+        <circle cx="14" cy="14" r="9"  fill="white"/>
+        <circle cx="14" cy="14" r="4.5" fill="#cc0000"/>
+      </svg>
+      Target
+    </button>
+    <button class="mode-btn" id="btn-amazon" onclick="setMode('amazon')">
+      <svg width="28" height="28" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect width="28" height="28" rx="5" fill="#FF9900"/>
+        <text x="14" y="19" font-family="Arial,sans-serif" font-size="17" font-weight="bold" fill="#111" text-anchor="middle">a</text>
+        <path d="M6 23 Q14 28 22 23" stroke="#111" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <path d="M20 21 L22 23 L20 24.5" stroke="#111" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Amazon
+    </button>
+  </div>
+
+  <h1 id="appTitle">Target Ratings Scraper</h1>
+  <p class="subtitle" id="appSubtitle">Paste Target product TCINs below to fetch star ratings and review counts.</p>
 
   <div class="card">
-    <label for="productIds">Product IDs (TCINs)</label>
-    <p class="hint">One per line, or comma/space-separated. Example: <code>84952002</code></p>
+    <label for="productIds" id="inputLabel">Product IDs (TCINs)</label>
+    <p class="hint">One per line, or comma/space-separated. Example: <code id="hintExample">84952002</code></p>
     <textarea id="productIds" placeholder="84952002&#10;12345678&#10;87654321"></textarea>
 
     <div class="actions">
@@ -215,9 +274,9 @@
     <div class="progress" id="progress"></div>
 
     <div class="proxy-note">
-      <strong>Note:</strong> Requests are routed through a public CORS proxy (codetabs.com) since browsers
-      cannot fetch cross-origin pages directly. If a product shows "Not found", the data may be
-      loaded dynamically — try opening the product link to verify the TCIN is valid.
+      <strong>Note:</strong> Requests are routed through a public CORS proxy since browsers cannot fetch
+      cross-origin pages directly (Target → codetabs.com, Amazon → codetabs.com mobile). If a product
+      shows "Not found", the data may be loaded dynamically — try opening the product link to verify.
     </div>
   </div>
 
@@ -225,7 +284,7 @@
     <table>
       <thead>
         <tr>
-          <th>TCIN</th>
+          <th id="colId">TCIN</th>
           <th>Product Page</th>
           <th>Rating</th>
           <th># of Ratings</th>
@@ -236,53 +295,105 @@
     </table>
   </div>
 
-  <div id="noResults">No valid TCINs entered.</div>
+  <div id="noResults">No valid IDs entered.</div>
 </div>
 
 <script>
-  // corsproxy.io works from file:// (null origin) unlike allorigins
   const CORS_PROXY = 'https://api.codetabs.com/v1/proxy?quest=';
   const CONCURRENCY = 3;
 
+  let currentMode = 'target';
   let resultsData = [];
 
-  // ── Parse the raw textarea into an array of TCIN strings ──────────────────
+  // ── Mode configuration ────────────────────────────────────────────────────
+  const MODES = {
+    target: {
+      title:       'Target Ratings Scraper',
+      subtitle:    'Paste Target product TCINs below to fetch star ratings and review counts.',
+      label:       'Product IDs (TCINs)',
+      hintExample: '84952002',
+      placeholder: '84952002\n12345678\n87654321',
+      colId:       'TCIN',
+      validateId:  s => /^\d{5,12}$/.test(s),
+      productUrl:  id => `https://www.target.com/p/-/A-${id}`,
+      proxy:       'https://api.codetabs.com/v1/proxy?quest=',
+    },
+    amazon: {
+      title:       'Amazon Ratings Scraper',
+      subtitle:    'Paste Amazon product ASINs below to fetch star ratings and review counts.',
+      label:       'Product IDs (ASINs)',
+      hintExample: 'B08N5WRWNW',
+      placeholder: 'B08N5WRWNW\nB07XJ8C8F5\nB09G9FPHY6',
+      colId:       'ASIN',
+      validateId:  s => /^[A-Z0-9]{10}$/i.test(s),
+      productUrl:  id => `https://www.amazon.com/gp/aw/d/${id}`,
+      proxy:       'https://api.codetabs.com/v1/proxy?quest=',
+    },
+  };
+
+  // ── Switch mode ───────────────────────────────────────────────────────────
+  function setMode(mode) {
+    if (mode === currentMode) return;
+    currentMode = mode;
+    const cfg = MODES[mode];
+
+    document.querySelector('.container').classList.toggle('amazon-mode', mode === 'amazon');
+
+    document.getElementById('appTitle').textContent    = cfg.title;
+    document.getElementById('appSubtitle').textContent = cfg.subtitle;
+    document.getElementById('inputLabel').textContent  = cfg.label;
+    document.getElementById('hintExample').textContent = cfg.hintExample;
+    document.getElementById('productIds').placeholder  = cfg.placeholder;
+    document.getElementById('colId').textContent       = cfg.colId;
+
+    document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+    document.getElementById(`btn-${mode}`).classList.add('active');
+
+    clearAll();
+  }
+
+  // ── Parse the raw textarea into an array of ID strings ───────────────────
   function parseIds(raw) {
+    const { validateId } = MODES[currentMode];
     return [...new Set(
       raw.split(/[\n,\s]+/)
-         .map(s => s.trim())
-         .filter(s => /^\d{5,12}$/.test(s))   // TCINs are typically 8 digits
+         .map(s => s.trim().toUpperCase())
+         .filter(s => validateId(s))
     )];
   }
 
-  // ── Fetch the Target product page via CORS proxy ───────────────────────────
-  async function fetchPage(tcin) {
-    const targetUrl = `https://www.target.com/p/-/A-${tcin}`;
-    const proxyUrl  = `${CORS_PROXY}${encodeURIComponent(targetUrl)}`;
+  // ── Fetch the product page via CORS proxy ─────────────────────────────────
+  async function fetchPage(id) {
+    const { productUrl: urlFn, proxy } = MODES[currentMode];
+    const proxyUrl = `${proxy}${encodeURIComponent(urlFn(id))}`;
 
     const resp = await fetch(proxyUrl);
     if (!resp.ok) throw new Error(`Proxy error ${resp.status}`);
-
-    // corsproxy.io returns the raw HTML directly
     return await resp.text();
   }
 
-  // ── Extract rating & count from raw HTML ──────────────────────────────────
+  // ── Route to the right parser ─────────────────────────────────────────────
   function parseRatings(html) {
+    return currentMode === 'amazon'
+      ? parseAmazonRatings(html)
+      : parseTargetRatings(html);
+  }
+
+  // ── Extract rating & count from Target HTML ───────────────────────────────
+  function parseTargetRatings(html) {
     const parser = new DOMParser();
     const doc    = parser.parseFromString(html, 'text/html');
 
-    // 1) Try the data-test attributes the user identified
+    // 1) Try the data-test attributes
     const ratingEl = doc.querySelector('[data-test="totalGuestRating"]');
     const countEl  = doc.querySelector('[data-test="ratingCountText"]');
 
     let rating = ratingEl ? ratingEl.textContent.trim() : null;
     let count  = countEl  ? countEl.textContent.trim()  : null;
 
-    // Strip any parentheses or extra text from count  e.g. "(1,234 ratings)"
     if (count) count = count.replace(/[()]/g, '').trim();
 
-    // 2) If not found in rendered HTML, search embedded JSON script blocks
+    // 2) Search embedded JSON script blocks
     if (!rating || !count) {
       const scripts = doc.querySelectorAll('script');
       for (const script of scripts) {
@@ -303,11 +414,10 @@
       }
     }
 
-    // 3) Last resort: regex against the raw HTML string for the JSON data
-    // Target embeds SSR data as: "rating":{"average":4.72,"count":17053}
+    // 3) Last resort: regex against the raw HTML string
     if (!rating) {
       const m = html.match(/"rating"\s*:\s*\{\s*"average"\s*:\s*(\d+(?:\.\d+)?)/) ||
-                html.match(/"(?:averageOverallRating|averageRating)"\s*:\s*"?(\d+(?:\.\d+)?)/); 
+                html.match(/"(?:averageOverallRating|averageRating)"\s*:\s*"?(\d+(?:\.\d+)?)/);
       if (m) rating = m[1];
     }
     if (!count) {
@@ -319,27 +429,109 @@
     return { rating, count };
   }
 
-  // ── Table row helpers ──────────────────────────────────────────────────────
-  function addTableRow(tcin) {
+  // ── Extract rating & count from Amazon HTML ───────────────────────────────
+  function parseAmazonRatings(html) {
+    // Detect CAPTCHA / bot-check page before parsing
+    if (/Type the characters you see|robot check|validateCaptcha/i.test(html)) {
+      throw new Error('CAPTCHA — Amazon blocked the request');
+    }
+
+    const parser = new DOMParser();
+    const doc    = parser.parseFromString(html, 'text/html');
+
+    let rating = null;
+    let count  = null;
+
+    // 1) DOM: first span inside [data-hook="acr-average-stars-rating-text"] (desktop page)
+    const ratingContainer = doc.querySelector('[data-hook="acr-average-stars-rating-text"]');
+    if (ratingContainer) {
+      const span = ratingContainer.querySelector('span');
+      if (span) {
+        const m = span.textContent.trim().match(/(\d+(?:[.,]\d+)?)/);
+        if (m) rating = m[1].replace(',', '.');
+      }
+    }
+
+    // 2) DOM: #acrPopover title="4.2 out of 5 stars" (mobile page)
+    if (!rating) {
+      const acrPopover = doc.getElementById('acrPopover');
+      if (acrPopover) {
+        const title = acrPopover.getAttribute('title') || '';
+        const m = title.match(/^(\d+(?:\.\d+)?)/);
+        if (m) rating = m[1];
+      }
+    }
+
+    // 3) DOM: #acrCustomerReviewText
+    // Mobile page renders "(6,697)" so use aria-label="6,697 Reviews" when present
+    const countEl = doc.getElementById('acrCustomerReviewText');
+    if (countEl) {
+      const src = countEl.getAttribute('aria-label') || countEl.textContent;
+      const m = src.match(/[\d,]+/);
+      if (m) count = m[0].replace(/,/g, '');
+    }
+
+    // 4) JSON-LD structured data — most reliably present in SSR HTML
+    if (!rating || !count) {
+      for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
+        try {
+          const data  = JSON.parse(script.textContent);
+          const items = Array.isArray(data) ? data : [data];
+          for (const item of items) {
+            const ar = item.aggregateRating;
+            if (ar) {
+              if (!rating && ar.ratingValue != null) rating = String(ar.ratingValue);
+              if (!count) {
+                const c = ar.reviewCount ?? ar.ratingCount;
+                if (c != null) count = String(c);
+              }
+            }
+            if (rating && count) break;
+          }
+        } catch {}
+        if (rating && count) break;
+      }
+    }
+
+    // 5) Embedded JSON patterns found in Amazon script blocks
+    if (!rating) {
+      const m = html.match(/"averageStarRating"\s*:\s*\{[^}]*"value"\s*:\s*([\d.]+)/) ||
+                html.match(/"averageOverallRating"\s*:\s*([\d.]+)/)                    ||
+                html.match(/"averageRating"\s*:\s*([\d.]+)/);
+      if (m) rating = m[1];
+    }
+    if (!count) {
+      const m = html.match(/"totalRatingCount"\s*:\s*(\d+)/) ||
+                html.match(/"totalReviewCount"\s*:\s*(\d+)/) ||
+                html.match(/"numberOfRatings"\s*:\s*(\d+)/);
+      if (m) count = m[1];
+    }
+
+    return { rating, count };
+  }
+
+  // ── Table row helpers ─────────────────────────────────────────────────────
+  function addTableRow(id) {
     const tbody = document.getElementById('tableBody');
     const tr = document.createElement('tr');
-    tr.id = `row-${tcin}`;
+    tr.id = `row-${id}`;
+    const url = MODES[currentMode].productUrl(id);
     tr.innerHTML = `
-      <td class="tcin-cell">${tcin}</td>
+      <td class="tcin-cell">${id}</td>
       <td class="link-cell">
-        <a href="https://www.target.com/p/-/A-${tcin}" target="_blank" rel="noopener">View ↗</a>
+        <a href="${url}" target="_blank" rel="noopener noreferrer">View ↗</a>
       </td>
-      <td id="rating-${tcin}" class="pending"><span class="spinner"></span></td>
-      <td id="count-${tcin}"  class="pending"><span class="spinner"></span></td>
-      <td id="status-${tcin}" class="pending"><span class="spinner"></span> Fetching…</td>
+      <td id="rating-${id}" class="pending"><span class="spinner"></span></td>
+      <td id="count-${id}"  class="pending"><span class="spinner"></span></td>
+      <td id="status-${id}" class="pending"><span class="spinner"></span> Fetching…</td>
     `;
     tbody.appendChild(tr);
   }
 
-  function updateTableRow(tcin, { rating, count, error }) {
-    const ratingCell = document.getElementById(`rating-${tcin}`);
-    const countCell  = document.getElementById(`count-${tcin}`);
-    const statusCell = document.getElementById(`status-${tcin}`);
+  function updateTableRow(id, { rating, count, error }) {
+    const ratingCell = document.getElementById(`rating-${id}`);
+    const countCell  = document.getElementById(`count-${id}`);
+    const statusCell = document.getElementById(`status-${id}`);
 
     if (error) {
       ratingCell.innerHTML = '<span class="miss">—</span>';
@@ -356,7 +548,7 @@
     }
   }
 
-  // ── Main scrape orchestrator ───────────────────────────────────────────────
+  // ── Main scrape orchestrator ──────────────────────────────────────────────
   async function scrapeAll() {
     const ids = parseIds(document.getElementById('productIds').value);
 
@@ -368,8 +560,7 @@
 
     document.getElementById('noResults').style.display = 'none';
 
-    // Reset results
-    resultsData = ids.map(tcin => ({ tcin, rating: null, count: null, error: null }));
+    resultsData = ids.map(id => ({ id, rating: null, count: null, error: null }));
     document.getElementById('tableBody').innerHTML = '';
     document.getElementById('resultsCard').style.display = 'block';
     document.getElementById('csvBtn').style.display = 'none';
@@ -388,44 +579,44 @@
     };
     setProgress();
 
-    async function processOne(tcin) {
+    async function processOne(id) {
       try {
-        const html = await fetchPage(tcin);
+        const html = await fetchPage(id);
         const { rating, count } = parseRatings(html);
-
-        const row = resultsData.find(r => r.tcin === tcin);
+        const row = resultsData.find(r => r.id === id);
         row.rating = rating;
         row.count  = count;
-        updateTableRow(tcin, { rating, count });
+        updateTableRow(id, { rating, count });
       } catch (err) {
-        const row = resultsData.find(r => r.tcin === tcin);
+        const row = resultsData.find(r => r.id === id);
         row.error = err.message;
-        updateTableRow(tcin, { error: err.message });
+        updateTableRow(id, { error: err.message });
       } finally {
         done++;
         setProgress();
       }
     }
 
-    // Process in batches to avoid hammering the proxy
     for (let i = 0; i < ids.length; i += CONCURRENCY) {
       const chunk = ids.slice(i, i + CONCURRENCY);
       await Promise.all(chunk.map(processOne));
     }
 
-    document.getElementById('progress').textContent = `Done — ${total} product${total !== 1 ? 's' : ''} processed.`;
+    document.getElementById('progress').textContent =
+      `Done — ${total} product${total !== 1 ? 's' : ''} processed.`;
     fetchBtn.disabled = false;
     fetchBtn.textContent = 'Fetch Ratings';
     document.getElementById('csvBtn').style.display = 'inline-block';
   }
 
-  // ── CSV export ─────────────────────────────────────────────────────────────
+  // ── CSV export ────────────────────────────────────────────────────────────
   function downloadCSV() {
-    const rows = [['TCIN', 'URL', 'Rating', 'Number of Ratings', 'Error']];
+    const idCol = MODES[currentMode].colId;
+    const rows = [[idCol, 'URL', 'Rating', 'Number of Ratings', 'Error']];
     for (const r of resultsData) {
       rows.push([
-        r.tcin,
-        `https://www.target.com/p/-/A-${r.tcin}`,
+        r.id,
+        MODES[currentMode].productUrl(r.id),
         r.rating ?? '',
         r.count  ?? '',
         r.error  ?? ''
@@ -439,12 +630,12 @@
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement('a');
     a.href     = url;
-    a.download = `target-ratings-${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `${currentMode}-ratings-${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  // ── Clear ──────────────────────────────────────────────────────────────────
+  // ── Clear ─────────────────────────────────────────────────────────────────
   function clearAll() {
     document.getElementById('productIds').value = '';
     document.getElementById('tableBody').innerHTML = '';
